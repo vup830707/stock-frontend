@@ -1,0 +1,6 @@
+services:
+  frontend:
+    image: stock-frontend:local
+    ports:
+      - "8088:80"
+    restart: unless-stopped
