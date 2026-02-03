@@ -19,10 +19,9 @@ pipeline {
     }
 
     stage('CD - Deploy Frontend') {
-      agent any   // ← 跳回 Jenkins 主機跑
+      agent { label 'windows' }
       steps {
         bat '''
-          echo === Deploy Frontend ===
           docker --version
           docker compose version
           docker compose up -d --build --force-recreate frontend
