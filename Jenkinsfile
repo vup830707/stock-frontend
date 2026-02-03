@@ -29,10 +29,14 @@ pipeline {
       }
       steps {
         sh '''
-          docker version
-          apk add --no-cache docker-cli-compose
-          docker compose version
-          docker compose up -d --build --force-recreate frontend
+        docker version
+        apk add --no-cache docker-cli-compose
+        docker compose version
+
+        # ✅ 如果舊容器存在就刪掉，避免 container_name 衝突
+        docker rm -f stock-frontend 2>/dev/null || true
+
+        docker compose up -d --build --force-recreate frontend
         '''
       }
     }
