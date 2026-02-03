@@ -22,17 +22,15 @@ pipeline {
       agent {
         docker {
           image 'docker:27-cli'
-          // 掛 docker socket + 讓容器能讀到 workspace 內的 docker-compose.yml
-          args '-v /var/run/docker.sock:/var/run/docker.sock -v $WORKSPACE:/work -w /work'
+          // ✅ 用 root 執行，才能 apk add
+          args '-u 0:0 -v /var/run/docker.sock:/var/run/docker.sock -v $WORKSPACE:/work -w /work'
           reuseNode true
         }
       }
       steps {
         sh '''
           docker version
-          # 安裝 compose plugin（docker:cli 可能沒有 compose）
           apk add --no-cache docker-cli-compose
-
           docker compose version
           docker compose up -d --build --force-recreate frontend
         '''
