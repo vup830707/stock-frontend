@@ -3,14 +3,17 @@ pipeline {
     docker {
       image 'node:20-alpine'
       args '-u root:root'
+      reuseNode true
     }
   }
 
   stages {
-    stage('Check Node') {
+    stage('Check Env') {
       steps {
         sh 'node -v'
         sh 'npm -v'
+        sh 'pwd'
+        sh 'ls -la'
       }
     }
 
