@@ -2,11 +2,17 @@ pipeline {
   agent any
 
   stages {
-    stage('Check Workspace') {
+    stage('Install Dependencies') {
       steps {
-        echo '=== Jenkins workspace ==='
-        sh 'pwd'
-        sh 'ls -la'
+        echo 'Installing npm dependencies...'
+        sh 'npm ci'
+      }
+    }
+
+    stage('Build Frontend') {
+      steps {
+        echo 'Building frontend...'
+        sh 'npm run build'
       }
     }
   }
