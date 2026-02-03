@@ -1,15 +1,21 @@
 pipeline {
-  agent any
-
-  tools {
-    nodejs 'node20'
+  agent {
+    docker {
+      image 'node:20-alpine'
+      args '-u root:root'
+    }
   }
 
   stages {
-    stage('Install') {
+    stage('Check Node') {
       steps {
         sh 'node -v'
         sh 'npm -v'
+      }
+    }
+
+    stage('Install') {
+      steps {
         sh 'npm ci'
       }
     }
