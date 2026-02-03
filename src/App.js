@@ -1,4 +1,5 @@
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useCallback } from "react";
+
 import { Line } from "react-chartjs-2";
 import {
   Chart as ChartJS,
@@ -21,6 +22,9 @@ ChartJS.register(
   Legend
 );
 
+// ✅ 放 component 外，避免每次 render 都生成新 function（穩定 deps）
+const parseDate = (s) => new Date(String(s).replaceAll("/", "-"));
+
 function App() {
   const [stockNo, setStockNo] = useState("");
   const [stockList, setStockList] = useState([]);
@@ -37,7 +41,7 @@ function App() {
   // ✅ 圖表顯示範圍（只影響圖表，不影響上方「筆數/區間」）
   const [rangeKey, setRangeKey] = useState("ALL"); // 1W,3M,6M,1Y,2Y,5Y,ALL
 
-  const parseDate = (s) => new Date(s.replaceAll("/", "-"));
+  // const parseDate = (s) => new Date(s.replaceAll("/", "-"));
 
   // =====================
   // 讀公司清單
@@ -60,15 +64,35 @@ function App() {
   // =====================
   // 抓歷史股價
   // =====================
-  const loadStockHistory = async (selectedStockNo) => {
+  // const loadStockHistory = async (selectedStockNo) => {
+  //   if (!selectedStockNo) return;
+
+  //   // const res = await fetch(
+  //   //   `http://localhost:8080/api/stock-history?stockNo=${selectedStockNo}`
+  //   // );
+  //   const res = await fetch(
+  //     `/api/stock-history?stockNo=${selectedStockNo}`
+  //   );
+  //   const data = await res.json();
+
+  //   const uniqueData = Array.from(
+  //     new Map(data.map((item) => [item.date, item])).values()
+  //   ).sort((a, b) => parseDate(a.date) - parseDate(b.date));
+
+  //   setHistorical(uniqueData);
+  //   setPrediction(null);
+  // };
+
+  const loadStockHistory = useCallback(async (selectedStockNo) => {
     if (!selectedStockNo) return;
 
-    // const res = await fetch(
-    //   `http://localhost:8080/api/stock-history?stockNo=${selectedStockNo}`
-    // );
-    const res = await fetch(
-      `/api/stock-history?stockNo=${selectedStockNo}`
-    );
+    const res = await fetch(`/api/stock-history?stockNo=${selectedStockNo}`);
+    if (!res.ok) {
+      console.error("loadStockHistory failed:", res.status, res.statusText);
+      alert("讀取歷史股價失敗");
+      return;
+    }
+
     const data = await res.json();
 
     const uniqueData = Array.from(
@@ -77,11 +101,18 @@ function App() {
 
     setHistorical(uniqueData);
     setPrediction(null);
-  };
+  }, []);
 
+  // useEffect(() => {
+  //   if (stockNo) loadStockHistory(stockNo);
+  // }, [stockNo]);
+
+  // =====================
+  // stockNo 變更 -> 自動抓歷史股價（✅ deps 正確）
+  // =====================
   useEffect(() => {
     if (stockNo) loadStockHistory(stockNo);
-  }, [stockNo]);
+  }, [stockNo, loadStockHistory]);
 
   // =====================
   // 手動抓資料（指定區間）
