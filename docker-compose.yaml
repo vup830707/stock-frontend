@@ -1,6 +1,13 @@
 services:
   frontend:
     image: stock-frontend:local
+    container_name: stock-frontend
     ports:
       - "8088:80"
-    restart: unless-stopped
+    networks:
+      - stock-net
+
+networks:
+  stock-net:
+    external: true
+    name: stock-net
