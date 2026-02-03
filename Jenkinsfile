@@ -1,31 +1,32 @@
 pipeline {
-  agent {
-    docker {
-      image 'node:20-alpine'
-      args '-u root:root'
-      reuseNode true
-    }
-  }
+  agent none
 
   stages {
-    stage('Check Env') {
+    stage('CI - Build Frontend') {
+      agent {
+        docker {
+          image 'node:20-alpine'
+          args '-u root:root'
+          reuseNode true
+        }
+      }
       steps {
         sh 'node -v'
         sh 'npm -v'
-        sh 'pwd'
-        sh 'ls -la'
-      }
-    }
-
-    stage('Install') {
-      steps {
         sh 'npm ci'
+        sh 'npm run build'
       }
     }
 
-    stage('Build') {
+    stage('CD - Deploy Frontend') {
+      agent any   // ← 跳回 Jenkins 主機跑
       steps {
-        sh 'npm run build'
+        bat '''
+          echo === Deploy Frontend ===
+          docker --version
+          docker compose version
+          docker compose up -d --build --force-recreate frontend
+        '''
       }
     }
   }
