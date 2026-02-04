@@ -1,5 +1,8 @@
 services:
   frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
     image: stock-frontend:local
     container_name: stock-frontend
     ports:
