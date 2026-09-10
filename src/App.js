@@ -1,6 +1,7 @@
 import { useEffect, useState, useMemo, useCallback } from "react";
 
 import { Line } from "react-chartjs-2";
+import { REASON_TEXT } from "./timingCopy";
 import {
   Chart as ChartJS,
   CategoryScale,
@@ -30,9 +31,8 @@ function App() {
   const [stockList, setStockList] = useState([]);
   const [historical, setHistorical] = useState([]);
 
-  // LSTM 預測
-  const [prediction, setPrediction] = useState(null);
-  const [predictLoading, setPredictLoading] = useState(false);
+  const [timing, setTiming] = useState(null);
+  const [timingLoading, setTimingLoading] = useState(false);
 
   // 手動日期
   const [startDate, setStartDate] = useState("");
@@ -100,7 +100,7 @@ function App() {
     ).sort((a, b) => parseDate(a.date) - parseDate(b.date));
 
     setHistorical(uniqueData);
-    setPrediction(null);
+    setTiming(null);
   }, []);
 
   // useEffect(() => {
@@ -138,50 +138,22 @@ function App() {
     }
   };
 
-  // =====================
-  // LSTM 預測（仍用整份 historical 的區間；圖表範圍不影響模型）
-  // =====================
-  const predictStock = async () => {
+  const evaluateTiming = async () => {
     if (!stockNo) return;
-    if (historical.length === 0) {
-      alert("目前沒有歷史資料可供預測");
-      return;
-    }
 
-    const start = historical[0].date.replaceAll("/", "-");
-    const end = historical.at(-1).date.replaceAll("/", "-");
-
-    setPredictLoading(true);
+    setTimingLoading(true);
     try {
-      // const res = await fetch("http://localhost:5000/predict_future", {
-      const res = await fetch("/ai/predict_future", {
+      const res = await fetch("/api/timing/evaluate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ticker: stockNo,
-          days: 1,
-          startDate: start,
-          endDate: end
-        })
+        body: JSON.stringify({ stockNo })
       });
-
       const data = await res.json();
-
-      if (!data.historicalPredictions || data.historicalPredictions.length === 0) {
-        alert("沒有可用的預測資料");
-        return;
-      }
-
-      // ✅ 若後端沒回 testDates，提醒一下（避免你又回到猜20%）
-      if (!data.testDates || data.testDates.length === 0) {
-        console.warn("Backend did not return testDates. Alignment may be inaccurate.");
-      }
-
-      setPrediction({ ...data });
+      setTiming(data);
     } catch (err) {
-      alert("LSTM 預測失敗");
+      setTiming({ passed: false, reason: "evaluate_failed" });
     } finally {
-      setPredictLoading(false);
+      setTimingLoading(false);
     }
   };
 
@@ -214,51 +186,20 @@ function App() {
   }, [historical, rangeKey]);
 
   // =====================
-  // ✅ 正確對齊：用後端回傳 testDates 精準塞到對應日期
-  // （不再用倒數20%推算）
-  // =====================
-  const alignedPredictionsForChart = useMemo(() => {
-    const dispLen = displayHistorical.length;
-    if (dispLen === 0) return [];
-
-    // 沒預測就回空（chart datasets 那邊會判斷）
-    if (!prediction?.historicalPredictions?.length) {
-      return Array(dispLen).fill(null);
-    }
-
-    const preds = prediction.historicalPredictions;
-    const dates = prediction.testDates || [];
-
-    // 建立 display 範圍內的 date -> index map
-    const indexByDate = new Map(displayHistorical.map((h, i) => [h.date, i]));
-
-    // 預設全 null
-    const aligned = Array(dispLen).fill(null);
-
-    // 用 testDates 對齊到 display 範圍
-    const n = Math.min(preds.length, dates.length);
-    for (let i = 0; i < n; i++) {
-      const idx = indexByDate.get(dates[i]);
-      if (idx != null) aligned[idx] = preds[i];
-    }
-
-    return aligned;
-  }, [displayHistorical, prediction]);
-
-  // =====================
-  // 只是顯示用：訓練/回測筆數（以後端回傳預測長度為準）
-  // =====================
-  const { trainCount, testCount } = useMemo(() => {
-    const totalAll = historical.length;
-    const test = prediction?.historicalPredictions?.length ?? 0;
-    const train = Math.max(totalAll - test, 0);
-    return { trainCount: train, testCount: test };
-  }, [historical, prediction]);
-
-  // =====================
   // 圖表資料（用 displayHistorical）
   // =====================
   const chartData = useMemo(() => {
+    const markerData = (side) =>
+      timing?.passed
+        ? displayHistorical.map((historicalItem) => {
+            const hit = (timing.trades || []).some(
+              (trade) =>
+                trade.date === historicalItem.date && trade.side === side
+            );
+            return hit ? historicalItem.closePrice : null;
+          })
+        : null;
+
     return {
       labels: displayHistorical.map((item) => item.date),
       datasets: [
@@ -268,17 +209,27 @@ function App() {
           borderColor: "#2563eb",
           tension: 0.3
         },
-        prediction?.historicalPredictions && {
-          label: "LSTM 回測預測",
-          data: alignedPredictionsForChart,
+        timing?.passed && {
+          label: "買點",
+          data: markerData("buy"),
+          borderColor: "#16a34a",
+          backgroundColor: "#16a34a",
+          showLine: false,
+          pointRadius: 5,
+          spanGaps: false
+        },
+        timing?.passed && {
+          label: "賣點",
+          data: markerData("sell"),
           borderColor: "#dc2626",
-          borderDash: [6, 6],
-          tension: 0.3,
-          spanGaps: false // 遇到 null 不要連線
+          backgroundColor: "#dc2626",
+          showLine: false,
+          pointRadius: 5,
+          spanGaps: false
         }
       ].filter(Boolean)
     };
-  }, [displayHistorical, prediction, alignedPredictionsForChart]);
+  }, [displayHistorical, timing]);
 
   const rangeLabel =
     rangeKey === "ALL"
@@ -360,44 +311,30 @@ function App() {
       </div>
 
       {/* ===================== */}
-      {/* 🧠 模型預測 */}
+      {/* 🚦 進出評估 */}
       {/* ===================== */}
       <div style={styles.card}>
-        <h2 style={styles.sectionTitle}>🧠 模型訓練 / 預測</h2>
+        <h2 style={styles.sectionTitle}>🚦 進出評估</h2>
 
         <button
           style={{ ...styles.button, background: "#dc2626" }}
-          onClick={predictStock}
-          disabled={predictLoading}
+          onClick={evaluateTiming}
+          disabled={timingLoading}
         >
-          {predictLoading ? "模型推論中..." : "📊 執行 LSTM 預測"}
+          {timingLoading ? "評估中..." : "評估進出"}
         </button>
 
-        {prediction && (
+        {timing && (
           <div style={styles.metricRow}>
-            <div>
-              🎯 Accuracy：
-              {prediction.metrics?.accuracy != null
-                ? Number(prediction.metrics.accuracy).toFixed(2)
-                : "-"}
-            </div>
-            <div>
-              📉 RMSE：
-              {prediction.metrics?.rmse != null
-                ? Number(prediction.metrics.rmse).toFixed(2)
-                : "-"}
-            </div>
-            <div>
-              📏 MAE：
-              {prediction.metrics?.mae != null
-                ? Number(prediction.metrics.mae).toFixed(2)
-                : "-"}
-            </div>
-
-            {/* 額外顯示：train/test 只是參考 */}
-            <div style={{ opacity: 0.85 }}>
-              🧠 訓練：約 {trainCount}　📈 回測：{testCount}
-            </div>
+            <div>{REASON_TEXT[timing.reason] || REASON_TEXT.evaluate_failed}</div>
+            {timing.passed && (
+              <div>
+                目前：{timing.currentSignal === "long" ? "持有" : "空手"}
+              </div>
+            )}
+            <div>策略 NAV：{timing.metrics?.strategyEndNav ?? "-"}</div>
+            <div>持有 NAV：{timing.metrics?.buyHoldEndNav ?? "-"}</div>
+            <div>交易次數：{timing.metrics?.roundTrips ?? "-"}</div>
           </div>
         )}
       </div>
