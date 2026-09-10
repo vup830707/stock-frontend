@@ -27,33 +27,37 @@ export function CandleChart({ bars, trades }) {
       wickUpColor: UP,
       wickDownColor: DOWN
     });
-    series.setData(
-      bars.map((bar) => ({
-        time: toTime(bar.date),
-        open: bar.openPrice,
-        high: bar.highPrice,
-        low: bar.lowPrice,
-        close: bar.closePrice
-      }))
-    );
+    const data = bars.map((bar) => ({
+      time: toTime(bar.date),
+      open: bar.openPrice,
+      high: bar.highPrice,
+      low: bar.lowPrice,
+      close: bar.closePrice
+    }));
+    const visibleTimes = new Set(data.map((bar) => bar.time));
+    series.setData(data);
     series.setMarkers(
-      (trades || []).map((trade) =>
-        trade.side === "buy"
-          ? {
-              time: toTime(trade.date),
-              position: "belowBar",
-              color: "#42a5f5",
-              shape: "arrowUp",
-              text: "買"
-            }
-          : {
-              time: toTime(trade.date),
-              position: "aboveBar",
-              color: "#ffca28",
-              shape: "arrowDown",
-              text: "賣"
-            }
-      )
+      (trades || [])
+        .filter((trade) => visibleTimes.has(toTime(trade.date)))
+        .slice()
+        .sort((a, b) => toTime(a.date).localeCompare(toTime(b.date)))
+        .map((trade) =>
+          trade.side === "buy"
+            ? {
+                time: toTime(trade.date),
+                position: "belowBar",
+                color: "#42a5f5",
+                shape: "arrowUp",
+                text: "買"
+              }
+            : {
+                time: toTime(trade.date),
+                position: "aboveBar",
+                color: "#ffca28",
+                shape: "arrowDown",
+                text: "賣"
+              }
+        )
     );
     chart.timeScale().fitContent();
     return () => chart.remove();

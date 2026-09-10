@@ -25,6 +25,11 @@ function formatYm(yearMonth) {
   return `${yearMonth.slice(0, 4)}/${yearMonth.slice(4)}`;
 }
 
+function formatNav(n) {
+  const value = Number(n);
+  return Number.isFinite(value) ? value.toFixed(2) : "-";
+}
+
 function App() {
   const [draft, setDraft] = useState("");
   const [stockNo, setStockNo] = useState("");
@@ -199,7 +204,7 @@ function App() {
     if (timing.passed) {
       stripClass = "strip pass";
       const side = timing.currentSignal === "long" ? "持有" : "空手";
-      strip = `${side} · 下一根開盤才算 · 策略 ${timing.metrics?.strategyEndNav ?? "-"} · 持有 ${timing.metrics?.buyHoldEndNav ?? "-"} · ${timing.metrics?.roundTrips ?? "-"} 次`;
+      strip = `${side} · 下一根開盤才算 · 策略 ${formatNav(timing.metrics?.strategyEndNav)} · 持有 ${formatNav(timing.metrics?.buyHoldEndNav)} · ${timing.metrics?.roundTrips ?? "-"} 次`;
     } else {
       stripClass = "strip fail";
       strip = reasonText;

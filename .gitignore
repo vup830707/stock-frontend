@@ -11,6 +11,8 @@
 # production
 /build
 
+.superpowers/
+
 # misc
 .DS_Store
 .env.local

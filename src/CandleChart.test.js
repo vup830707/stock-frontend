@@ -40,3 +40,27 @@ test("maps slash dates and passed trades to markers", () => {
     expect.objectContaining({ time: "2024-01-02", text: "買", position: "belowBar" })
   ]);
 });
+
+test("drops trades whose date is not on a visible bar", () => {
+  render(
+    <CandleChart
+      bars={[
+        {
+          date: "2024/01/08",
+          openPrice: 1,
+          highPrice: 2,
+          lowPrice: 0.5,
+          closePrice: 1.5
+        }
+      ]}
+      trades={[
+        { date: "2023/06/01", side: "sell" },
+        { date: "2024/01/08", side: "buy" },
+        { date: "2022/01/01", side: "sell" }
+      ]}
+    />
+  );
+  expect(mockSetMarkers).toHaveBeenCalledWith([
+    expect.objectContaining({ time: "2024-01-08", text: "買" })
+  ]);
+});

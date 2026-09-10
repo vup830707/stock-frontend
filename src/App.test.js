@@ -326,3 +326,26 @@ test("ignores stale evaluate after a newer ticker submit", async () => {
   expect(screen.getByText("鴻海")).toBeInTheDocument();
   expect(screen.queryByText(/下一根開盤才算/)).not.toBeInTheDocument();
 });
+
+test("passed strip rounds NAV to two decimals", async () => {
+  mockTimingResponse = {
+    passed: true,
+    reason: "passed",
+    metrics: {
+      strategyEndNav: 0.9916320707917428,
+      buyHoldEndNav: 0.8219793457767723,
+      roundTrips: 67
+    },
+    trades: [],
+    currentSignal: "long"
+  };
+  historyRows = Array.from({ length: 627 }, (_, i) => ohlcvBar(i));
+  render(<App />);
+  await userEvent.type(screen.getByLabelText(/代號/), "2330{enter}");
+  await screen.findByText("台積電");
+  await userEvent.click(await screen.findByRole("button", { name: /評估進出/ }));
+  await screen.findByText(/策略 0\.99/);
+  expect(screen.getByText(/持有 0\.82/)).toBeInTheDocument();
+  expect(screen.getByText(/67 次/)).toBeInTheDocument();
+  expect(screen.queryByText(/0\.991632/)).not.toBeInTheDocument();
+});
