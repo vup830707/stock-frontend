@@ -1,146 +1,129 @@
-import { useEffect, useState, useMemo, useCallback } from "react";
-
-import { Line } from "react-chartjs-2";
+import { useMemo, useState } from "react";
+import { CandleChart } from "./CandleChart";
 import { REASON_TEXT } from "./timingCopy";
 import {
-  Chart as ChartJS,
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-  Title,
-  Tooltip,
-  Legend
-} from "chart.js";
+  FETCH_GAP_MS,
+  MIN_EVALUATE_BARS,
+  TICKER_RE,
+  fiveYearMonths,
+  incrementalMonths,
+  parseSlashDate
+} from "./fetchMonths";
+import { runMonthlyFetch } from "./runMonthlyFetch";
+import "./App.css";
 
-ChartJS.register(
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-  Title,
-  Tooltip,
-  Legend
-);
+const RANGE_OPTIONS = [
+  ["1W", "1週"],
+  ["3M", "3月"],
+  ["6M", "半年"],
+  ["1Y", "1年"],
+  ["ALL", "全部"]
+];
 
-// ✅ 放 component 外，避免每次 render 都生成新 function（穩定 deps）
-const parseDate = (s) => new Date(String(s).replaceAll("/", "-"));
+function formatYm(yearMonth) {
+  return `${yearMonth.slice(0, 4)}/${yearMonth.slice(4)}`;
+}
 
 function App() {
+  const [draft, setDraft] = useState("");
   const [stockNo, setStockNo] = useState("");
-  const [stockList, setStockList] = useState([]);
   const [historical, setHistorical] = useState([]);
-
   const [timing, setTiming] = useState(null);
   const [timingLoading, setTimingLoading] = useState(false);
+  const [fetching, setFetching] = useState(false);
+  const [status, setStatus] = useState("輸入四位數代號後按 Enter");
+  const [rangeKey, setRangeKey] = useState("ALL");
 
-  // 手動日期
-  const [startDate, setStartDate] = useState("");
-  const [endDate, setEndDate] = useState("");
-
-  // ✅ 圖表顯示範圍（只影響圖表，不影響上方「筆數/區間」）
-  const [rangeKey, setRangeKey] = useState("ALL"); // 1W,3M,6M,1Y,2Y,5Y,ALL
-
-  // const parseDate = (s) => new Date(s.replaceAll("/", "-"));
-
-  // =====================
-  // 讀公司清單
-  // =====================
-  useEffect(() => {
-    const loadCompanies = async () => {
-      try {
-        // const res = await fetch("http://localhost:8080/api/company/all");
-        const res = await fetch("/api/company/all");
-        const data = await res.json();
-        setStockList(data);
-        if (data.length > 0) setStockNo(data[0].stockNo);
-      } catch (err) {
-        alert("讀取公司清單失敗");
-      }
-    };
-    loadCompanies();
-  }, []);
-
-  // =====================
-  // 抓歷史股價
-  // =====================
-  // const loadStockHistory = async (selectedStockNo) => {
-  //   if (!selectedStockNo) return;
-
-  //   // const res = await fetch(
-  //   //   `http://localhost:8080/api/stock-history?stockNo=${selectedStockNo}`
-  //   // );
-  //   const res = await fetch(
-  //     `/api/stock-history?stockNo=${selectedStockNo}`
-  //   );
-  //   const data = await res.json();
-
-  //   const uniqueData = Array.from(
-  //     new Map(data.map((item) => [item.date, item])).values()
-  //   ).sort((a, b) => parseDate(a.date) - parseDate(b.date));
-
-  //   setHistorical(uniqueData);
-  //   setPrediction(null);
-  // };
-
-  const loadStockHistory = useCallback(async (selectedStockNo) => {
-    if (!selectedStockNo) return;
-
+  const loadStockHistory = async (selectedStockNo) => {
     const res = await fetch(`/api/stock-history?stockNo=${selectedStockNo}`);
     if (!res.ok) {
-      console.error("loadStockHistory failed:", res.status, res.statusText);
-      alert("讀取歷史股價失敗");
-      return;
+      setStatus("讀取歷史股價失敗");
+      setHistorical([]);
+      return [];
     }
-
     const data = await res.json();
-
     const uniqueData = Array.from(
       new Map(data.map((item) => [item.date, item])).values()
-    ).sort((a, b) => parseDate(a.date) - parseDate(b.date));
-
+    ).sort((a, b) => parseSlashDate(a.date) - parseSlashDate(b.date));
     setHistorical(uniqueData);
-    setTiming(null);
-  }, []);
+    return uniqueData;
+  };
 
-  // useEffect(() => {
-  //   if (stockNo) loadStockHistory(stockNo);
-  // }, [stockNo]);
-
-  // =====================
-  // stockNo 變更 -> 自動抓歷史股價（✅ deps 正確）
-  // =====================
-  useEffect(() => {
-    if (stockNo) loadStockHistory(stockNo);
-  }, [stockNo, loadStockHistory]);
-
-  // =====================
-  // 手動抓資料（指定區間）
-  // =====================
-  const fetchStockManualRange = async () => {
-    if (!stockNo || !startDate || !endDate) {
-      alert("請選擇股票與起訖日期");
+  const submitTicker = async () => {
+    if (fetching) return;
+    if (!TICKER_RE.test(draft)) {
+      setStatus("請輸入四位數上市代號");
       return;
     }
-
-    try {
-      // const res = await fetch(
-      //   `http://localhost:8080/api/manual/fetch-range?stockNo=${stockNo}&startDate=${startDate}&endDate=${endDate}`
-      // );
-      const res = await fetch(
-        `/api/manual/fetch-range?stockNo=${stockNo}&startDate=${startDate}&endDate=${endDate}`
-      );
-      const text = await res.text();
-      alert(text);
-      loadStockHistory(stockNo);
-    } catch (err) {
-      alert("手動抓資料失敗");
+    setStockNo(draft);
+    setTiming(null);
+    const rows = await loadStockHistory(draft);
+    if (rows.length === 0) {
+      setStatus("這檔還沒抓過");
+    } else if (rows.length < MIN_EVALUATE_BARS) {
+      setStatus("日線不足，請先抓近五年");
+    } else {
+      setStatus("尚未評估 · 圖上只有日 K");
     }
   };
 
-  const evaluateTiming = async () => {
-    if (!stockNo) return;
+  const runFetch = async (months) => {
+    if (!TICKER_RE.test(stockNo) && !TICKER_RE.test(draft)) {
+      setStatus("請輸入四位數上市代號");
+      return;
+    }
+    const code = TICKER_RE.test(stockNo) ? stockNo : draft;
+    if (!TICKER_RE.test(stockNo)) {
+      setStockNo(code);
+    }
+    if (months.length === 0) {
+      setStatus("已是最新");
+      return;
+    }
+    setFetching(true);
+    setTiming(null);
+    try {
+      const { anyOk } = await runMonthlyFetch({
+        months,
+        postMonth: async (yearMonth) => {
+          const res = await fetch("/api/manual/fetch-month", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ stockNo: code, yearMonth })
+          });
+          return res.json();
+        },
+        delayMs: FETCH_GAP_MS,
+        onProgress: (p) => {
+          setStatus(`正在抓 ${formatYm(p.yearMonth)}（${p.index}/${p.total}）`);
+        }
+      });
+      const rows = await loadStockHistory(code);
+      if (rows.length === 0 && !anyOk) {
+        setStatus("查無此上市代號或沒有日線");
+      } else if (rows.length < MIN_EVALUATE_BARS) {
+        setStatus("日線不足，請先抓近五年");
+      } else {
+        setStatus("尚未評估 · 圖上只有日 K");
+      }
+    } finally {
+      setFetching(false);
+    }
+  };
 
+  const fetchFiveYears = () => runFetch(fiveYearMonths(new Date()));
+
+  const refreshLatest = () => {
+    if (historical.length === 0) {
+      fetchFiveYears();
+      return;
+    }
+    const last = parseSlashDate(historical.at(-1).date);
+    runFetch(incrementalMonths(last, new Date()));
+  };
+
+  const evaluateTiming = async () => {
+    if (!stockNo || historical.length < MIN_EVALUATE_BARS) return;
     setTimingLoading(true);
     try {
       const res = await fetch("/api/timing/evaluate", {
@@ -151,349 +134,97 @@ function App() {
       const data = await res.json();
       setTiming(data);
     } catch (err) {
-      setTiming({ passed: false, reason: "evaluate_failed" });
+      setTiming({ passed: false, reason: "evaluate_failed", trades: [], currentSignal: null });
     } finally {
       setTimingLoading(false);
     }
   };
 
-  // =====================
-  // 圖表顯示用資料：依 rangeKey 篩選（只影響圖表）
-  // =====================
   const displayHistorical = useMemo(() => {
     if (historical.length === 0) return [];
     if (rangeKey === "ALL") return historical;
-
-    const end = parseDate(historical.at(-1).date);
+    const end = parseSlashDate(historical.at(-1).date);
     const start = new Date(end);
-
-    const daysBack = { "1W": 7 };
-    const monthsBack = { "3M": 3, "6M": 6 };
-    const yearsBack = { "1Y": 1, "2Y": 2, "5Y": 5 };
-
-    if (daysBack[rangeKey]) {
-      start.setDate(start.getDate() - daysBack[rangeKey]);
-    } else if (monthsBack[rangeKey]) {
-      start.setMonth(start.getMonth() - monthsBack[rangeKey]);
-    } else if (yearsBack[rangeKey]) {
-      start.setFullYear(start.getFullYear() - yearsBack[rangeKey]);
-    }
-
-    return historical.filter((x) => {
-      const d = parseDate(x.date);
+    if (rangeKey === "1W") start.setDate(start.getDate() - 7);
+    if (rangeKey === "3M") start.setMonth(start.getMonth() - 3);
+    if (rangeKey === "6M") start.setMonth(start.getMonth() - 6);
+    if (rangeKey === "1Y") start.setFullYear(start.getFullYear() - 1);
+    return historical.filter((row) => {
+      const d = parseSlashDate(row.date);
       return d >= start && d <= end;
     });
   }, [historical, rangeKey]);
 
-  // =====================
-  // 圖表資料（用 displayHistorical）
-  // =====================
-  const chartData = useMemo(() => {
-    const markerData = (side) =>
-      timing?.passed
-        ? displayHistorical.map((historicalItem) => {
-            const hit = (timing.trades || []).some(
-              (trade) =>
-                trade.date === historicalItem.date && trade.side === side
-            );
-            return hit ? historicalItem.closePrice : null;
-          })
-        : null;
+  const last = historical.at(-1);
+  const prev = historical.at(-2);
+  const change = last && prev ? last.closePrice - prev.closePrice : 0;
+  const changePct = last && prev && prev.closePrice ? (change / prev.closePrice) * 100 : 0;
+  const up = change >= 0;
+  const canEvaluate = !fetching && !timingLoading && historical.length >= MIN_EVALUATE_BARS;
+  const chartTrades = timing?.passed ? timing.trades || [] : [];
 
-    return {
-      labels: displayHistorical.map((item) => item.date),
-      datasets: [
-        {
-          label: "歷史收盤價",
-          data: displayHistorical.map((item) => item.closePrice),
-          borderColor: "#2563eb",
-          tension: 0.3
-        },
-        timing?.passed && {
-          label: "買點",
-          data: markerData("buy"),
-          borderColor: "#16a34a",
-          backgroundColor: "#16a34a",
-          showLine: false,
-          pointRadius: 5,
-          spanGaps: false
-        },
-        timing?.passed && {
-          label: "賣點",
-          data: markerData("sell"),
-          borderColor: "#dc2626",
-          backgroundColor: "#dc2626",
-          showLine: false,
-          pointRadius: 5,
-          spanGaps: false
-        }
-      ].filter(Boolean)
-    };
-  }, [displayHistorical, timing]);
-
-  const rangeLabel =
-    rangeKey === "ALL"
-      ? "全部"
-      : rangeKey === "1W"
-      ? "1週"
-      : rangeKey === "3M"
-      ? "3月"
-      : rangeKey === "6M"
-      ? "半年"
-      : rangeKey === "1Y"
-      ? "1年"
-      : rangeKey === "2Y"
-      ? "2年"
-      : "5年";
-
-  const chartOptions = {
-    responsive: true,
-    plugins: {
-      legend: { position: "top" },
-      title: {
-        display: true,
-        text:
-          historical.length > 0
-            ? `${historical[0].stockName} 股價圖表（顯示：${rangeLabel}）`
-            : "股價圖表"
-      }
+  let strip = status;
+  let stripClass = "strip";
+  if (!fetching && timing) {
+    const reasonText = REASON_TEXT[timing.reason] || REASON_TEXT.evaluate_failed;
+    if (timing.passed) {
+      stripClass = "strip pass";
+      const side = timing.currentSignal === "long" ? "持有" : "空手";
+      strip = `${side} · 下一根開盤才算 · 策略 ${timing.metrics?.strategyEndNav ?? "-"} · 持有 ${timing.metrics?.buyHoldEndNav ?? "-"} · ${timing.metrics?.roundTrips ?? "-"} 次`;
+    } else {
+      stripClass = "strip fail";
+      strip = reasonText;
     }
-  };
+  }
 
   return (
-    <div style={styles.page}>
-      <h1 style={styles.title}>📈 股票分析系統</h1>
-
-      {/* ===================== */}
-      {/* 📥 資料取得（筆數/區間保留：顯示整份 historical） */}
-      {/* ===================== */}
-      <div style={styles.card}>
-        <h2 style={styles.sectionTitle}>📥 資料取得</h2>
-
-        <div style={styles.controlRow}>
-          <select
-            value={stockNo}
-            onChange={(e) => setStockNo(e.target.value)}
-            style={styles.select}
-          >
-            {stockList.map((company) => (
-              <option key={company.stockNo} value={company.stockNo}>
-                {company.stockNo} - {company.stockName}
-              </option>
-            ))}
-          </select>
-
+    <div className="board">
+      <div className="board-header">
+        <div className="quote">
           <input
-            type="date"
-            value={startDate}
-            onChange={(e) => setStartDate(e.target.value)}
-            style={{ ...styles.select, maxWidth: "150px" }}
+            aria-label="代號"
+            value={draft}
+            disabled={fetching}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") submitTicker();
+            }}
           />
-
-          <input
-            type="date"
-            value={endDate}
-            onChange={(e) => setEndDate(e.target.value)}
-            style={{ ...styles.select, maxWidth: "150px" }}
-          />
-
-          <button style={styles.button} onClick={fetchStockManualRange}>
-            抓資料
+          <span className="name">{last?.stockName || ""}</span>
+          {last && (
+            <span className={up ? "up" : "down"}>
+              {last.closePrice.toFixed(2)} {change >= 0 ? "+" : ""}
+              {change.toFixed(2)} {changePct >= 0 ? "+" : ""}
+              {changePct.toFixed(2)}%
+            </span>
+          )}
+        </div>
+        <div className="actions">
+          {historical.length === 0 ? (
+            <button disabled={fetching} onClick={fetchFiveYears}>抓近五年</button>
+          ) : (
+            <button disabled={fetching} onClick={refreshLatest}>更新資料</button>
+          )}
+          <button disabled={!canEvaluate} onClick={evaluateTiming}>
+            {timingLoading ? "評估中..." : "評估進出"}
           </button>
         </div>
-
-        {historical.length > 0 && (
-          <div style={styles.infoRow}>
-            📊 筆數：{historical.length}　
-            📅 區間：{historical[0].date} ~ {historical.at(-1).date}
-          </div>
-        )}
       </div>
-
-      {/* ===================== */}
-      {/* 🚦 進出評估 */}
-      {/* ===================== */}
-      <div style={styles.card}>
-        <h2 style={styles.sectionTitle}>🚦 進出評估</h2>
-
-        <button
-          style={{ ...styles.button, background: "#dc2626" }}
-          onClick={evaluateTiming}
-          disabled={timingLoading}
-        >
-          {timingLoading ? "評估中..." : "評估進出"}
-        </button>
-
-        {timing && (
-          <div style={styles.metricRow}>
-            <div>{REASON_TEXT[timing.reason] || REASON_TEXT.evaluate_failed}</div>
-            {timing.passed && (
-              <div>
-                目前：{timing.currentSignal === "long" ? "持有" : "空手"}
-              </div>
-            )}
-            {[
-              "passed",
-              "after_cost_underperformed_buy_hold",
-              "too_few_round_trips"
-            ].includes(timing.reason) && (
-              <>
-                <div>策略 NAV：{timing.metrics?.strategyEndNav ?? "-"}</div>
-                <div>持有 NAV：{timing.metrics?.buyHoldEndNav ?? "-"}</div>
-                <div>交易次數：{timing.metrics?.roundTrips ?? "-"}</div>
-              </>
-            )}
-          </div>
-        )}
+      <div className="range">
+        {RANGE_OPTIONS.map(([key, label]) => (
+          <button
+            key={key}
+            className={rangeKey === key ? "active" : ""}
+            onClick={() => setRangeKey(key)}
+          >
+            {label}
+          </button>
+        ))}
       </div>
-
-      {/* ===================== */}
-      {/* 📊 股價圖表（filter 放這裡） */}
-      {/* ===================== */}
-      <div style={styles.card}>
-        <div style={styles.chartHeaderRow}>
-          <div style={styles.chartTitle}>📊 股價圖表</div>
-
-          <div style={styles.rangeRow}>
-            {[
-              ["1W", "1週"],
-              ["3M", "3月"],
-              ["6M", "半年"],
-              ["1Y", "1年"],
-              ["2Y", "2年"],
-              ["5Y", "5年"],
-              ["ALL", "全部"]
-            ].map(([key, label]) => (
-              <button
-                key={key}
-                onClick={() => setRangeKey(key)}
-                style={{
-                  ...styles.rangeBtn,
-                  ...(rangeKey === key ? styles.rangeBtnActive : {})
-                }}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {displayHistorical.length > 0 && (
-          <div style={styles.chartInfo}>
-            顯示區間：{displayHistorical[0].date} ~{" "}
-            {displayHistorical.at(-1).date}（{displayHistorical.length} 筆）
-          </div>
-        )}
-
-        <Line data={chartData} options={chartOptions} />
-      </div>
+      <CandleChart bars={displayHistorical} trades={chartTrades} />
+      <div className={stripClass}>{strip}</div>
     </div>
   );
 }
 
 export default App;
-
-// =====================
-// styles
-// =====================
-const styles = {
-  page: {
-    minHeight: "100vh",
-    background: "#f3f4f6",
-    padding: "40px",
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    gap: "20px"
-  },
-  title: {
-    fontSize: "32px",
-    fontWeight: "bold"
-  },
-  sectionTitle: {
-    fontSize: "20px",
-    fontWeight: "bold",
-    marginBottom: "12px"
-  },
-  card: {
-    background: "#ffffff",
-    borderRadius: "12px",
-    padding: "20px",
-    width: "100%",
-    maxWidth: "900px",
-    boxShadow: "0 10px 25px rgba(0,0,0,0.08)"
-  },
-  controlRow: {
-    display: "flex",
-    gap: "12px",
-    alignItems: "center",
-    flexWrap: "wrap"
-  },
-  select: {
-    padding: "10px 12px",
-    fontSize: "16px",
-    borderRadius: "8px",
-    border: "1px solid #d1d5db",
-    flex: 1,
-    minWidth: "180px"
-  },
-  button: {
-    padding: "10px 18px",
-    fontSize: "16px",
-    borderRadius: "8px",
-    border: "none",
-    background: "#2563eb",
-    color: "#ffffff",
-    cursor: "pointer"
-  },
-  infoRow: {
-    marginTop: "10px",
-    color: "#374151",
-    fontSize: "14px"
-  },
-  metricRow: {
-    marginTop: "16px",
-    display: "flex",
-    gap: "20px",
-    flexWrap: "wrap"
-  },
-
-  // 圖表 header
-  chartHeaderRow: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    flexWrap: "wrap",
-    gap: "10px",
-    marginBottom: "8px"
-  },
-  chartTitle: {
-    fontSize: "18px",
-    fontWeight: "bold"
-  },
-  chartInfo: {
-    marginBottom: "10px",
-    color: "#374151",
-    fontSize: "14px"
-  },
-
-  // range filter styles
-  rangeRow: {
-    display: "flex",
-    gap: "8px",
-    flexWrap: "wrap"
-  },
-  rangeBtn: {
-    padding: "6px 10px",
-    borderRadius: "999px",
-    border: "1px solid #d1d5db",
-    background: "#ffffff",
-    cursor: "pointer",
-    fontSize: "14px"
-  },
-  rangeBtnActive: {
-    border: "1px solid #2563eb",
-    background: "#2563eb",
-    color: "#ffffff"
-  }
-};

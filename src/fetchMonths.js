@@ -36,5 +36,6 @@ export function incrementalMonths(lastBarDate, today) {
 }
 
 export function parseSlashDate(s) {
-  return new Date(String(s).replaceAll("/", "-"));
+  const [year, month, day] = String(s).split(/[/-]/).map(Number);
+  return new Date(year, month - 1, day);
 }
