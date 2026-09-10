@@ -60,10 +60,12 @@ export function SidePanel({ selectedStockNo, watched, onSelect, onToggleWatch })
     loadWatchItems();
   }, [loadWatchItems]);
 
+  const prevTabRef = useRef(tab);
   useEffect(() => {
-    if (tab === "watch") {
+    if (tab === "watch" && prevTabRef.current !== "watch") {
       loadWatchItems();
     }
+    prevTabRef.current = tab;
   }, [tab, loadWatchItems]);
 
   const handleSearchResults = (items) => {

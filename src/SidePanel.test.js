@@ -111,6 +111,40 @@ test("watch error is not cleared by successful leaderboard fetch", async () => {
   expect(screen.queryByText("觀察清單載入失敗")).not.toBeInTheDocument();
 });
 
+test("watch tab does not double-fetch when watched changes while active", async () => {
+  evaluateBatch.mockResolvedValue({
+    items: [
+      {
+        stockNo: "2317",
+        stockName: "鴻海",
+        passed: false,
+        metrics: { winRate: 0.5, strategyEndNav: 1.0 }
+      }
+    ]
+  });
+  const { rerender } = render(
+    <SidePanel
+      selectedStockNo=""
+      watched={["2317"]}
+      onSelect={() => {}}
+      onToggleWatch={() => {}}
+    />
+  );
+  await userEvent.click(screen.getByRole("tab", { name: /觀察/ }));
+  await waitFor(() => expect(evaluateBatch).toHaveBeenCalledTimes(2));
+  evaluateBatch.mockClear();
+  rerender(
+    <SidePanel
+      selectedStockNo=""
+      watched={["2317", "2330"]}
+      onSelect={() => {}}
+      onToggleWatch={() => {}}
+    />
+  );
+  await waitFor(() => expect(evaluateBatch).toHaveBeenCalledTimes(1));
+  expect(evaluateBatch).toHaveBeenCalledWith(["2317", "2330"]);
+});
+
 test("ignores stale watch batch after watched changes", async () => {
   let finishFirst;
   evaluateBatch.mockImplementation((codes) => {

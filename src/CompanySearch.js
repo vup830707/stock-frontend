@@ -6,6 +6,8 @@ export function CompanySearch({ onResults, onPick, disabled = false, debounceMs 
   const [options, setOptions] = useState([]);
   const onResultsRef = useRef(onResults);
   const onPickRef = useRef(onPick);
+  const searchRequestRef = useRef(0);
+  const skipSearchRef = useRef(false);
 
   useEffect(() => {
     onResultsRef.current = onResults;
@@ -16,14 +18,20 @@ export function CompanySearch({ onResults, onPick, disabled = false, debounceMs 
   }, [onPick]);
 
   useEffect(() => {
+    if (skipSearchRef.current) {
+      skipSearchRef.current = false;
+      return undefined;
+    }
     const trimmed = q.trim();
     if (!trimmed) {
       setOptions([]);
       onResultsRef.current([]);
       return undefined;
     }
+    const requestId = ++searchRequestRef.current;
     const t = setTimeout(async () => {
       const items = await searchCompanies(trimmed);
+      if (requestId !== searchRequestRef.current) return;
       setOptions(items);
       onResultsRef.current(items);
     }, debounceMs);
@@ -48,6 +56,7 @@ export function CompanySearch({ onResults, onPick, disabled = false, debounceMs 
                 role="option"
                 onClick={() => {
                   onPickRef.current(o.stockNo);
+                  skipSearchRef.current = true;
                   setQ(`${o.stockNo} ${o.stockName || ""}`.trim());
                   setOptions([]);
                 }}
