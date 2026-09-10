@@ -51,6 +51,9 @@ beforeEach(() => {
         json: () => Promise.resolve({ twseOk: true, upserted: 1, stockName: "台積電" })
       });
     }
+    if (u.includes("/api/timing/evaluate-batch")) {
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ items: [] }) });
+    }
     if (u.includes("/api/timing/evaluate")) {
       return Promise.resolve({
         ok: true,
@@ -65,9 +68,6 @@ beforeEach(() => {
         ok: true,
         json: () => Promise.resolve(mockLeaderboardResponse)
       });
-    }
-    if (u.includes("/api/timing/evaluate-batch")) {
-      return Promise.resolve({ ok: true, json: () => Promise.resolve({ items: [] }) });
     }
     return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
   });
@@ -304,6 +304,9 @@ test("ignores stale evaluate after a newer ticker submit", async () => {
         ok: true,
         json: () => Promise.resolve([ohlcvBar(0, { stockNo: "2317", stockName: "鴻海" })])
       });
+    }
+    if (u.includes("/api/timing/evaluate-batch")) {
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ items: [] }) });
     }
     if (u.includes("/api/timing/evaluate")) {
       return new Promise((resolve) => {
