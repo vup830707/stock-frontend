@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchLeaderboard, evaluateBatch } from "./api/timingApi";
 import { CompanySearch } from "./CompanySearch";
 import { StockList } from "./StockList";
@@ -13,7 +13,9 @@ export function SidePanel({ selectedStockNo, watched, onSelect, onToggleWatch })
   const [leaderboardItems, setLeaderboardItems] = useState([]);
   const [watchItems, setWatchItems] = useState([]);
   const [searchItems, setSearchItems] = useState([]);
-  const [error, setError] = useState("");
+  const [leaderboardError, setLeaderboardError] = useState("");
+  const [watchError, setWatchError] = useState("");
+  const watchRequestRef = useRef(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -22,10 +24,10 @@ export function SidePanel({ selectedStockNo, watched, onSelect, onToggleWatch })
         const data = await fetchLeaderboard();
         if (!cancelled) {
           setLeaderboardItems(data.items || []);
-          setError("");
+          setLeaderboardError("");
         }
       } catch {
-        if (!cancelled) setError("排行載入失敗");
+        if (!cancelled) setLeaderboardError("排行載入失敗");
       }
     })();
     return () => {
@@ -34,17 +36,23 @@ export function SidePanel({ selectedStockNo, watched, onSelect, onToggleWatch })
   }, []);
 
   const loadWatchItems = useCallback(async () => {
+    const requestId = ++watchRequestRef.current;
     if (!watched || watched.length === 0) {
-      setWatchItems([]);
+      if (requestId === watchRequestRef.current) {
+        setWatchItems([]);
+        setWatchError("");
+      }
       return;
     }
     try {
       const data = await evaluateBatch(watched);
+      if (requestId !== watchRequestRef.current) return;
       setWatchItems(alignWatchItems(watched, data?.items));
-      setError("");
+      setWatchError("");
     } catch {
+      if (requestId !== watchRequestRef.current) return;
       setWatchItems(watched.map((stockNo) => ({ stockNo })));
-      setError("觀察清單載入失敗");
+      setWatchError("觀察清單載入失敗");
     }
   }, [watched]);
 
@@ -75,7 +83,6 @@ export function SidePanel({ selectedStockNo, watched, onSelect, onToggleWatch })
   return (
     <aside className="side-panel">
       <CompanySearch onResults={handleSearchResults} onPick={onSelect} />
-      {error && <p className="side-panel-error">{error}</p>}
       <div role="tablist" className="side-panel-tabs">
         <button
           type="button"
@@ -103,10 +110,16 @@ export function SidePanel({ selectedStockNo, watched, onSelect, onToggleWatch })
         </button>
       </div>
       {tab === "leaderboard" && (
-        <StockList items={leaderboardItems} emptyText="尚無排行資料" {...listProps} />
+        <>
+          {leaderboardError && <p className="side-panel-error">{leaderboardError}</p>}
+          <StockList items={leaderboardItems} emptyText="尚無排行資料" {...listProps} />
+        </>
       )}
       {tab === "watch" && (
-        <StockList items={watchItems} emptyText="尚無觀察" {...listProps} />
+        <>
+          {watchError && <p className="side-panel-error">{watchError}</p>}
+          <StockList items={watchItems} emptyText="尚無觀察" {...listProps} />
+        </>
       )}
       {tab === "search" && (
         <StockList items={searchItems} emptyText="尚無搜尋結果" {...listProps} />
