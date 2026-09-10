@@ -332,9 +332,17 @@ function App() {
                 目前：{timing.currentSignal === "long" ? "持有" : "空手"}
               </div>
             )}
-            <div>策略 NAV：{timing.metrics?.strategyEndNav ?? "-"}</div>
-            <div>持有 NAV：{timing.metrics?.buyHoldEndNav ?? "-"}</div>
-            <div>交易次數：{timing.metrics?.roundTrips ?? "-"}</div>
+            {[
+              "passed",
+              "after_cost_underperformed_buy_hold",
+              "too_few_round_trips"
+            ].includes(timing.reason) && (
+              <>
+                <div>策略 NAV：{timing.metrics?.strategyEndNav ?? "-"}</div>
+                <div>持有 NAV：{timing.metrics?.buyHoldEndNav ?? "-"}</div>
+                <div>交易次數：{timing.metrics?.roundTrips ?? "-"}</div>
+              </>
+            )}
           </div>
         )}
       </div>
