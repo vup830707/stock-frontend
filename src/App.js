@@ -1,10 +1,11 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { CandleChart } from "./CandleChart";
 import { REASON_TEXT } from "./timingCopy";
 import {
   FETCH_GAP_MS,
   MIN_EVALUATE_BARS,
   TICKER_RE,
+  countValidOhlcv,
   fiveYearMonths,
   incrementalMonths,
   parseSlashDate
@@ -33,15 +34,30 @@ function App() {
   const [fetching, setFetching] = useState(false);
   const [status, setStatus] = useState("輸入四位數代號後按 Enter");
   const [rangeKey, setRangeKey] = useState("ALL");
+  const requestGen = useRef(0);
+  const activeCodeRef = useRef("");
 
-  const loadStockHistory = async (selectedStockNo) => {
+  const historyStatus = (rows) => {
+    const valid = countValidOhlcv(rows);
+    if (valid === 0) return "這檔還沒抓過";
+    if (valid < MIN_EVALUATE_BARS) return "日線不足，請先抓近五年";
+    return "尚未評估 · 圖上只有日 K";
+  };
+
+  const loadStockHistory = async (selectedStockNo, gen) => {
     const res = await fetch(`/api/stock-history?stockNo=${selectedStockNo}`);
+    if (gen !== requestGen.current || activeCodeRef.current !== selectedStockNo) {
+      return [];
+    }
     if (!res.ok) {
       setStatus("讀取歷史股價失敗");
       setHistorical([]);
       return [];
     }
     const data = await res.json();
+    if (gen !== requestGen.current || activeCodeRef.current !== selectedStockNo) {
+      return [];
+    }
     const uniqueData = Array.from(
       new Map(data.map((item) => [item.date, item])).values()
     ).sort((a, b) => parseSlashDate(a.date) - parseSlashDate(b.date));
@@ -55,16 +71,14 @@ function App() {
       setStatus("請輸入四位數上市代號");
       return;
     }
-    setStockNo(draft);
+    const code = draft;
+    const gen = ++requestGen.current;
+    activeCodeRef.current = code;
+    setStockNo(code);
     setTiming(null);
-    const rows = await loadStockHistory(draft);
-    if (rows.length === 0) {
-      setStatus("這檔還沒抓過");
-    } else if (rows.length < MIN_EVALUATE_BARS) {
-      setStatus("日線不足，請先抓近五年");
-    } else {
-      setStatus("尚未評估 · 圖上只有日 K");
-    }
+    const rows = await loadStockHistory(code, gen);
+    if (gen !== requestGen.current) return;
+    setStatus(historyStatus(rows));
   };
 
   const runFetch = async (months) => {
@@ -74,8 +88,11 @@ function App() {
     }
     const code = TICKER_RE.test(stockNo) ? stockNo : draft;
     if (!TICKER_RE.test(stockNo)) {
+      requestGen.current += 1;
       setStockNo(code);
     }
+    const gen = requestGen.current;
+    activeCodeRef.current = code;
     if (months.length === 0) {
       setStatus("已是最新");
       return;
@@ -91,20 +108,28 @@ function App() {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ stockNo: code, yearMonth })
           });
+          if (!res.ok) {
+            return { twseOk: false };
+          }
           return res.json();
         },
         delayMs: FETCH_GAP_MS,
         onProgress: (p) => {
+          if (gen !== requestGen.current) return;
           setStatus(`正在抓 ${formatYm(p.yearMonth)}（${p.index}/${p.total}）`);
         }
       });
-      const rows = await loadStockHistory(code);
-      if (rows.length === 0 && !anyOk) {
+      if (gen !== requestGen.current) return;
+      const rows = await loadStockHistory(code, gen);
+      if (gen !== requestGen.current) return;
+      if (countValidOhlcv(rows) === 0 && !anyOk) {
         setStatus("查無此上市代號或沒有日線");
-      } else if (rows.length < MIN_EVALUATE_BARS) {
-        setStatus("日線不足，請先抓近五年");
       } else {
-        setStatus("尚未評估 · 圖上只有日 K");
+        setStatus(historyStatus(rows));
+      }
+    } catch {
+      if (gen === requestGen.current) {
+        setStatus("抓取日線失敗");
       }
     } finally {
       setFetching(false);
@@ -123,17 +148,21 @@ function App() {
   };
 
   const evaluateTiming = async () => {
-    if (!stockNo || historical.length < MIN_EVALUATE_BARS) return;
+    if (!stockNo || countValidOhlcv(historical) < MIN_EVALUATE_BARS) return;
+    const code = stockNo;
+    const gen = requestGen.current;
     setTimingLoading(true);
     try {
       const res = await fetch("/api/timing/evaluate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ stockNo })
+        body: JSON.stringify({ stockNo: code })
       });
       const data = await res.json();
+      if (gen !== requestGen.current || activeCodeRef.current !== code) return;
       setTiming(data);
-    } catch (err) {
+    } catch {
+      if (gen !== requestGen.current || activeCodeRef.current !== code) return;
       setTiming({ passed: false, reason: "evaluate_failed", trades: [], currentSignal: null });
     } finally {
       setTimingLoading(false);
@@ -160,7 +189,7 @@ function App() {
   const change = last && prev ? last.closePrice - prev.closePrice : 0;
   const changePct = last && prev && prev.closePrice ? (change / prev.closePrice) * 100 : 0;
   const up = change >= 0;
-  const canEvaluate = !fetching && !timingLoading && historical.length >= MIN_EVALUATE_BARS;
+  const canEvaluate = !fetching && !timingLoading && countValidOhlcv(historical) >= MIN_EVALUATE_BARS;
   const chartTrades = timing?.passed ? timing.trades || [] : [];
 
   let strip = status;

@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import App from "./App";
 
@@ -142,6 +142,29 @@ test("insufficient data hides comparison metrics", async () => {
   expect(screen.queryByText(/策略 0/)).not.toBeInTheDocument();
 });
 
+function ohlcvBar(i, extra = {}) {
+  return {
+    stockNo: "2330",
+    stockName: "台積電",
+    date: barDate(i),
+    openPrice: 100,
+    highPrice: 101,
+    lowPrice: 99,
+    closePrice: 100,
+    volume: 1,
+    ...extra
+  };
+}
+
+function yesterdaySlash() {
+  const d = new Date();
+  d.setDate(d.getDate() - 1);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}/${m}/${day}`;
+}
+
 test("evaluate is disabled when history is shorter than 627 bars", async () => {
   historyRows = [
     {
@@ -160,4 +183,146 @@ test("evaluate is disabled when history is shorter than 627 bars", async () => {
   await screen.findByText("台積電");
   expect(screen.getByRole("button", { name: /評估進出/ })).toBeDisabled();
   expect(screen.getByText(/日線不足/)).toBeInTheDocument();
+});
+
+test("evaluate is disabled when raw length is 627 but valid ohlcv is below 627", async () => {
+  historyRows = Array.from({ length: 627 }, (_, i) =>
+    i === 0 ? ohlcvBar(i, { openPrice: null, highPrice: null, lowPrice: null, closePrice: null }) : ohlcvBar(i)
+  );
+  render(<App />);
+  await userEvent.type(screen.getByLabelText(/代號/), "2330{enter}");
+  await screen.findByText("台積電");
+  expect(screen.getByRole("button", { name: /評估進出/ })).toBeDisabled();
+  expect(screen.getByText(/日線不足/)).toBeInTheDocument();
+});
+
+test("non-ok fetch-month is a miss and does not parse the body", async () => {
+  historyRows = [ohlcvBar(0, { date: yesterdaySlash() })];
+  const monthJson = jest.fn(() => Promise.resolve("<html>error</html>"));
+  global.fetch = jest.fn((url) => {
+    const u = String(url);
+    if (u.includes("/api/stock-history")) {
+      return Promise.resolve({ ok: true, json: () => Promise.resolve(historyRows) });
+    }
+    if (u.includes("/api/manual/fetch-month")) {
+      return Promise.resolve({ ok: false, json: monthJson });
+    }
+    return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
+  });
+  render(<App />);
+  await userEvent.type(screen.getByLabelText(/代號/), "2330{enter}");
+  await screen.findByText("台積電");
+  await userEvent.click(screen.getByRole("button", { name: /更新資料/ }));
+  await waitFor(() => {
+    expect(screen.getByRole("button", { name: /更新資料/ })).toBeEnabled();
+  });
+  expect(monthJson).not.toHaveBeenCalled();
+  expect(screen.queryByText(/正在抓/)).not.toBeInTheDocument();
+  expect(screen.getByText(/日線不足/)).toBeInTheDocument();
+});
+
+test("fetch-month throw sets a failure status and clears fetching", async () => {
+  historyRows = [ohlcvBar(0, { date: yesterdaySlash() })];
+  global.fetch = jest.fn((url) => {
+    const u = String(url);
+    if (u.includes("/api/stock-history")) {
+      return Promise.resolve({ ok: true, json: () => Promise.resolve(historyRows) });
+    }
+    if (u.includes("/api/manual/fetch-month")) {
+      return Promise.reject(new Error("network"));
+    }
+    return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
+  });
+  render(<App />);
+  await userEvent.type(screen.getByLabelText(/代號/), "2330{enter}");
+  await screen.findByText("台積電");
+  await userEvent.click(screen.getByRole("button", { name: /更新資料/ }));
+  await waitFor(() => {
+    expect(screen.getByText(/抓取日線失敗/)).toBeInTheDocument();
+  });
+  expect(screen.queryByText(/正在抓/)).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /更新資料/ })).toBeEnabled();
+});
+
+test("ignores stale history response after a newer ticker submit", async () => {
+  let finish2330;
+  const rows2330 = [ohlcvBar(0, { stockName: "台積電" })];
+  const rows2317 = [ohlcvBar(0, { stockNo: "2317", stockName: "鴻海" })];
+  global.fetch = jest.fn((url) => {
+    const u = String(url);
+    if (u.includes("/api/stock-history?stockNo=2330")) {
+      return new Promise((resolve) => {
+        finish2330 = () =>
+          resolve({ ok: true, json: () => Promise.resolve(rows2330) });
+      });
+    }
+    if (u.includes("/api/stock-history?stockNo=2317")) {
+      return Promise.resolve({ ok: true, json: () => Promise.resolve(rows2317) });
+    }
+    return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
+  });
+  render(<App />);
+  const input = screen.getByLabelText(/代號/);
+  await userEvent.type(input, "2330{enter}");
+  await waitFor(() => expect(finish2330).toBeDefined());
+  await userEvent.clear(input);
+  await userEvent.type(input, "2317{enter}");
+  await screen.findByText("鴻海");
+  finish2330();
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+  });
+  expect(screen.getByText("鴻海")).toBeInTheDocument();
+  expect(screen.queryByText("台積電")).not.toBeInTheDocument();
+});
+
+test("ignores stale evaluate after a newer ticker submit", async () => {
+  let finishEval;
+  historyRows = Array.from({ length: 627 }, (_, i) => ohlcvBar(i));
+  global.fetch = jest.fn((url, options = {}) => {
+    const u = String(url);
+    if (u.includes("/api/stock-history?stockNo=2330")) {
+      return Promise.resolve({ ok: true, json: () => Promise.resolve(historyRows) });
+    }
+    if (u.includes("/api/stock-history?stockNo=2317")) {
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve([ohlcvBar(0, { stockNo: "2317", stockName: "鴻海" })])
+      });
+    }
+    if (u.includes("/api/timing/evaluate")) {
+      return new Promise((resolve) => {
+        finishEval = () =>
+          resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                passed: true,
+                reason: "passed",
+                metrics: { strategyEndNav: 1.1, buyHoldEndNav: 1.0, roundTrips: 3 },
+                trades: [{ date: "2020/01/03", side: "buy" }],
+                currentSignal: "long"
+              })
+          });
+      });
+    }
+    return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
+  });
+  render(<App />);
+  await userEvent.type(screen.getByLabelText(/代號/), "2330{enter}");
+  await screen.findByText("台積電");
+  await userEvent.click(screen.getByRole("button", { name: /評估進出/ }));
+  await waitFor(() => expect(finishEval).toBeDefined());
+  const input = screen.getByLabelText(/代號/);
+  await userEvent.clear(input);
+  await userEvent.type(input, "2317{enter}");
+  await screen.findByText("鴻海");
+  finishEval();
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+  });
+  expect(screen.getByText("鴻海")).toBeInTheDocument();
+  expect(screen.queryByText(/下一根開盤才算/)).not.toBeInTheDocument();
 });

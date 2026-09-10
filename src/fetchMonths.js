@@ -3,6 +3,20 @@ export const FETCH_YEARS = 5;
 export const MIN_EVALUATE_BARS = 627;
 export const FETCH_GAP_MS = 200;
 
+export function countValidOhlcv(rows) {
+  if (!Array.isArray(rows)) return 0;
+  return rows.filter((bar) =>
+    Number.isFinite(bar?.openPrice)
+    && Number.isFinite(bar?.highPrice)
+    && Number.isFinite(bar?.lowPrice)
+    && Number.isFinite(bar?.closePrice)
+    && bar.openPrice > 0
+    && bar.highPrice > 0
+    && bar.lowPrice > 0
+    && bar.closePrice > 0
+  ).length;
+}
+
 export function toYearMonth(date) {
   const y = date.getFullYear();
   const m = String(date.getMonth() + 1).padStart(2, "0");

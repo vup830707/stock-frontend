@@ -1,4 +1,4 @@
-import { fiveYearMonths, incrementalMonths, parseSlashDate } from "./fetchMonths";
+import { fiveYearMonths, incrementalMonths, parseSlashDate, countValidOhlcv } from "./fetchMonths";
 
 test("fiveYearMonths covers calendar five years inclusive", () => {
   const months = fiveYearMonths(new Date(2026, 8, 10));
@@ -29,4 +29,23 @@ test("parseSlashDate uses local calendar day not UTC", () => {
   expect(dash.getMonth()).toBe(11);
   expect(dash.getDate()).toBe(31);
   expect(dash.getHours()).toBe(0);
+});
+
+test("countValidOhlcv counts only bars with numeric open high low close", () => {
+  const valid = {
+    openPrice: 100,
+    highPrice: 101,
+    lowPrice: 99,
+    closePrice: 100
+  };
+  const rows = [
+    valid,
+    { ...valid, openPrice: null },
+    { ...valid, highPrice: undefined },
+    { ...valid, lowPrice: "99" },
+    { ...valid, closePrice: 0 },
+    { date: "2020/01/02" }
+  ];
+  expect(countValidOhlcv(rows)).toBe(1);
+  expect(countValidOhlcv(Array.from({ length: 627 }, () => ({ ...valid })))).toBe(627);
 });
