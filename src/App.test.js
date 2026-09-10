@@ -141,3 +141,23 @@ test("insufficient data hides comparison metrics", async () => {
   await screen.findByText(/請先抓近五年日線/);
   expect(screen.queryByText(/策略 0/)).not.toBeInTheDocument();
 });
+
+test("evaluate is disabled when history is shorter than 627 bars", async () => {
+  historyRows = [
+    {
+      stockNo: "2330",
+      stockName: "台積電",
+      date: "2020/01/02",
+      openPrice: 100,
+      highPrice: 101,
+      lowPrice: 99,
+      closePrice: 100,
+      volume: 1
+    }
+  ];
+  render(<App />);
+  await userEvent.type(screen.getByLabelText(/代號/), "2330{enter}");
+  await screen.findByText("台積電");
+  expect(screen.getByRole("button", { name: /評估進出/ })).toBeDisabled();
+  expect(screen.getByText(/日線不足/)).toBeInTheDocument();
+});
