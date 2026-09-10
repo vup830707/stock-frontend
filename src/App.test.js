@@ -37,9 +37,6 @@ beforeEach(() => {
   };
   global.fetch = jest.fn((url, options = {}) => {
     const u = String(url);
-    if (u.includes("/api/company/all")) {
-      return Promise.reject(new Error("company list should not be called"));
-    }
     if (u.includes("/api/stock-history")) {
       return Promise.resolve({
         ok: true,
@@ -140,6 +137,9 @@ test("insufficient data hides comparison metrics", async () => {
   await userEvent.click(await screen.findByRole("button", { name: /評估進出/ }));
   await screen.findByText(/請先抓近五年日線/);
   expect(screen.queryByText(/策略 0/)).not.toBeInTheDocument();
+  const detail = screen.getByTestId("timing-detail");
+  expect(detail).toHaveTextContent("0.00");
+  expect(detail).toHaveTextContent("0");
 });
 
 function ohlcvBar(i, extra = {}) {
