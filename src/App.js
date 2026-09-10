@@ -1,6 +1,11 @@
 import { useMemo, useRef, useState } from "react";
+import { evaluateTiming as postEvaluate } from "./api/timingApi";
 import { CandleChart } from "./CandleChart";
+import { SidePanel } from "./SidePanel";
+import { TimingDetail } from "./TimingDetail";
 import { REASON_TEXT } from "./timingCopy";
+import { formatNav } from "./formatters";
+import { loadWatchlist, toggleWatchlist } from "./watchlistStorage";
 import {
   FETCH_GAP_MS,
   MIN_EVALUATE_BARS,
@@ -25,11 +30,6 @@ function formatYm(yearMonth) {
   return `${yearMonth.slice(0, 4)}/${yearMonth.slice(4)}`;
 }
 
-function formatNav(n) {
-  const value = Number(n);
-  return Number.isFinite(value) ? value.toFixed(2) : "-";
-}
-
 function App() {
   const [draft, setDraft] = useState("");
   const [stockNo, setStockNo] = useState("");
@@ -39,6 +39,8 @@ function App() {
   const [fetching, setFetching] = useState(false);
   const [status, setStatus] = useState("輸入四位數代號後按 Enter");
   const [rangeKey, setRangeKey] = useState("ALL");
+  const [watched, setWatched] = useState(() => loadWatchlist());
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const requestGen = useRef(0);
   const activeCodeRef = useRef("");
 
@@ -70,13 +72,12 @@ function App() {
     return uniqueData;
   };
 
-  const submitTicker = async () => {
+  const selectStock = async (code) => {
     if (fetching) return;
-    if (!TICKER_RE.test(draft)) {
+    if (!TICKER_RE.test(code)) {
       setStatus("請輸入四位數上市代號");
       return;
     }
-    const code = draft;
     const gen = ++requestGen.current;
     activeCodeRef.current = code;
     setStockNo(code);
@@ -84,6 +85,15 @@ function App() {
     const rows = await loadStockHistory(code, gen);
     if (gen !== requestGen.current) return;
     setStatus(historyStatus(rows));
+  };
+
+  const submitTicker = async () => {
+    if (fetching) return;
+    if (!TICKER_RE.test(draft)) {
+      setStatus("請輸入四位數上市代號");
+      return;
+    }
+    await selectStock(draft);
   };
 
   const runFetch = async (months) => {
@@ -158,12 +168,7 @@ function App() {
     const gen = requestGen.current;
     setTimingLoading(true);
     try {
-      const res = await fetch("/api/timing/evaluate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ stockNo: code })
-      });
-      const data = await res.json();
+      const data = await postEvaluate(code);
       if (gen !== requestGen.current || activeCodeRef.current !== code) return;
       setTiming(data);
     } catch {
@@ -213,50 +218,82 @@ function App() {
 
   return (
     <div className="board">
-      <div className="board-header">
-        <div className="quote">
-          <input
-            aria-label="代號"
-            value={draft}
-            disabled={fetching}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") submitTicker();
-            }}
-          />
-          <span className="name">{last?.stockName || ""}</span>
-          {last && (
-            <span className={up ? "up" : "down"}>
-              {last.closePrice.toFixed(2)} {change >= 0 ? "+" : ""}
-              {change.toFixed(2)} {changePct >= 0 ? "+" : ""}
-              {changePct.toFixed(2)}%
-            </span>
-          )}
+      <button
+        type="button"
+        className="sidebar-toggle"
+        aria-label="選股列表"
+        onClick={() => setSidebarOpen((v) => !v)}
+      >
+        列表
+      </button>
+      <aside className={`sidebar ${sidebarOpen ? "open" : ""}`}>
+        <SidePanel
+          selectedStockNo={stockNo}
+          watched={watched}
+          onSelect={(code) => {
+            setDraft(code);
+            selectStock(code);
+            setSidebarOpen(false);
+          }}
+          onToggleWatch={(code) => setWatched(toggleWatchlist(code))}
+        />
+      </aside>
+      <main className="main">
+        <div className="board-header">
+          <div className="quote">
+            <input
+              aria-label="代號"
+              value={draft}
+              disabled={fetching}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") submitTicker();
+              }}
+            />
+            <span className="name">{last?.stockName || ""}</span>
+            {last && (
+              <span className={up ? "up" : "down"}>
+                {last.closePrice.toFixed(2)} {change >= 0 ? "+" : ""}
+                {change.toFixed(2)} {changePct >= 0 ? "+" : ""}
+                {changePct.toFixed(2)}%
+              </span>
+            )}
+            <button
+              type="button"
+              className="watch-btn"
+              aria-label={watched.includes(stockNo) ? "取消關注" : "關注"}
+              disabled={!TICKER_RE.test(stockNo)}
+              onClick={() => setWatched(toggleWatchlist(stockNo))}
+            >
+              {watched.includes(stockNo) ? "★ 已關注" : "☆ 關注"}
+            </button>
+          </div>
+          <div className="actions">
+            {historical.length === 0 ? (
+              <button disabled={fetching} onClick={fetchFiveYears}>抓近五年</button>
+            ) : (
+              <button disabled={fetching} onClick={refreshLatest}>更新資料</button>
+            )}
+            <button disabled={!canEvaluate} onClick={evaluateTiming}>
+              {timingLoading ? "評估中..." : "評估進出"}
+            </button>
+          </div>
         </div>
-        <div className="actions">
-          {historical.length === 0 ? (
-            <button disabled={fetching} onClick={fetchFiveYears}>抓近五年</button>
-          ) : (
-            <button disabled={fetching} onClick={refreshLatest}>更新資料</button>
-          )}
-          <button disabled={!canEvaluate} onClick={evaluateTiming}>
-            {timingLoading ? "評估中..." : "評估進出"}
-          </button>
+        <div className="range">
+          {RANGE_OPTIONS.map(([key, label]) => (
+            <button
+              key={key}
+              className={rangeKey === key ? "active" : ""}
+              onClick={() => setRangeKey(key)}
+            >
+              {label}
+            </button>
+          ))}
         </div>
-      </div>
-      <div className="range">
-        {RANGE_OPTIONS.map(([key, label]) => (
-          <button
-            key={key}
-            className={rangeKey === key ? "active" : ""}
-            onClick={() => setRangeKey(key)}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-      <CandleChart bars={displayHistorical} trades={chartTrades} />
-      <div className={stripClass}>{strip}</div>
+        <CandleChart bars={displayHistorical} trades={chartTrades} />
+        <div className={stripClass}>{strip}</div>
+        <TimingDetail timing={timing} historical={historical} />
+      </main>
     </div>
   );
 }

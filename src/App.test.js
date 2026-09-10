@@ -5,6 +5,7 @@ import App from "./App";
 let mockChartTrades;
 let mockTimingResponse;
 let historyRows;
+let mockLeaderboardResponse;
 
 jest.mock("./CandleChart", () => ({
   CandleChart: ({ trades }) => {
@@ -24,6 +25,7 @@ function barDate(i) {
 beforeEach(() => {
   mockChartTrades = undefined;
   historyRows = [];
+  mockLeaderboardResponse = { updatedAt: null, items: [] };
   mockTimingResponse = {
     passed: false,
     reason: "after_cost_underperformed_buy_hold",
@@ -37,9 +39,6 @@ beforeEach(() => {
   };
   global.fetch = jest.fn((url, options = {}) => {
     const u = String(url);
-    if (u.includes("/api/company/all")) {
-      return Promise.reject(new Error("company list should not be called"));
-    }
     if (u.includes("/api/stock-history")) {
       return Promise.resolve({
         ok: true,
@@ -52,10 +51,22 @@ beforeEach(() => {
         json: () => Promise.resolve({ twseOk: true, upserted: 1, stockName: "台積電" })
       });
     }
+    if (u.includes("/api/timing/evaluate-batch")) {
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ items: [] }) });
+    }
     if (u.includes("/api/timing/evaluate")) {
       return Promise.resolve({
         ok: true,
         json: () => Promise.resolve(mockTimingResponse)
+      });
+    }
+    if (u.includes("/api/company/search")) {
+      return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
+    }
+    if (u.includes("/api/timing/leaderboard")) {
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve(mockLeaderboardResponse)
       });
     }
     return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
@@ -140,6 +151,9 @@ test("insufficient data hides comparison metrics", async () => {
   await userEvent.click(await screen.findByRole("button", { name: /評估進出/ }));
   await screen.findByText(/請先抓近五年日線/);
   expect(screen.queryByText(/策略 0/)).not.toBeInTheDocument();
+  const detail = screen.getByTestId("timing-detail");
+  expect(detail).toHaveTextContent("0.00");
+  expect(detail).toHaveTextContent("0");
 });
 
 function ohlcvBar(i, extra = {}) {
@@ -291,6 +305,9 @@ test("ignores stale evaluate after a newer ticker submit", async () => {
         json: () => Promise.resolve([ohlcvBar(0, { stockNo: "2317", stockName: "鴻海" })])
       });
     }
+    if (u.includes("/api/timing/evaluate-batch")) {
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ items: [] }) });
+    }
     if (u.includes("/api/timing/evaluate")) {
       return new Promise((resolve) => {
         finishEval = () =>
@@ -348,4 +365,85 @@ test("passed strip rounds NAV to two decimals", async () => {
   expect(screen.getByText(/持有 0\.82/)).toBeInTheDocument();
   expect(screen.getByText(/67 次/)).toBeInTheDocument();
   expect(screen.queryByText(/0\.991632/)).not.toBeInTheDocument();
+});
+
+test("leaderboard row selects stock and loads history", async () => {
+  mockLeaderboardResponse = {
+    updatedAt: "2026-09-10T00:00:00Z",
+    items: [
+      {
+        stockNo: "2317",
+        stockName: "鴻海",
+        passed: true,
+        metrics: { winRate: 0.6, strategyEndNav: 1.1 }
+      }
+    ]
+  };
+  historyRows = [
+    {
+      stockNo: "2317",
+      stockName: "鴻海",
+      date: "2020/01/02",
+      openPrice: 100,
+      highPrice: 101,
+      lowPrice: 99,
+      closePrice: 100,
+      volume: 1
+    }
+  ];
+  render(<App />);
+  expect(await screen.findByText("鴻海")).toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: /選 2317/ }));
+  await waitFor(() => {
+    expect(global.fetch).toHaveBeenCalledWith("/api/stock-history?stockNo=2317");
+  });
+  const quote = document.querySelector(".quote");
+  expect(quote).toHaveTextContent("鴻海");
+});
+
+test("watch toggle persists in localStorage", async () => {
+  localStorage.clear();
+  historyRows = [
+    {
+      stockNo: "2330",
+      stockName: "台積電",
+      date: "2020/01/02",
+      openPrice: 100,
+      highPrice: 101,
+      lowPrice: 99,
+      closePrice: 100,
+      volume: 1
+    }
+  ];
+  render(<App />);
+  await userEvent.type(screen.getByLabelText(/代號/), "2330{enter}");
+  await screen.findByText("台積電");
+  await userEvent.click(screen.getByRole("button", { name: /關注/ }));
+  expect(JSON.parse(localStorage.getItem("stock-timing-watchlist"))).toEqual(["2330"]);
+});
+
+test("failed evaluate still shows metrics in timing-detail", async () => {
+  mockTimingResponse = {
+    passed: false,
+    reason: "after_cost_underperformed_buy_hold",
+    metrics: {
+      winRate: 0.4,
+      strategyEndNav: 0.9,
+      buyHoldEndNav: 1.2,
+      roundTrips: 4,
+      recentReturn: -0.01
+    },
+    trades: [{ date: "2020/01/03", side: "buy", price: 10 }],
+    currentSignal: null
+  };
+  historyRows = Array.from({ length: 627 }, (_, i) => ohlcvBar(i));
+  render(<App />);
+  await userEvent.type(screen.getByLabelText(/代號/), "2330{enter}");
+  await screen.findByText("台積電");
+  await userEvent.click(await screen.findByRole("button", { name: /評估進出/ }));
+  const detail = screen.getByTestId("timing-detail");
+  await waitFor(() => {
+    expect(detail).toHaveTextContent("40%");
+    expect(detail).toHaveTextContent("0.90");
+  });
 });
